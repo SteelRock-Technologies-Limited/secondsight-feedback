@@ -211,7 +211,7 @@
     <ol class="steps">
       <li>Fill in the form and press <strong>Add to log</strong></li>
       <li>Entries autosave in this browser</li>
-      <li>Press <strong>Copy all (CSV)</strong> and email it to your SteelRock contact</li>
+      <li>Press <strong>Send to SteelRock</strong> &mdash; or <strong>Copy all (CSV)</strong> to email it yourself</li>
     </ol>
   </section>
 
@@ -309,6 +309,9 @@
         <label class="f"><span>Your name</span>
           <input type="text" id="f_tester" placeholder="Tester / callsign"></label>
 
+        <label class="f"><span>Your email <span class="req">*</span></span>
+          <input type="text" id="f_email" inputmode="email" placeholder="name@org - so we can tell you when it is fixed"></label>
+
         <div class="actions">
           <button type="submit" class="primary">Add to log</button>
           <button type="reset" class="ghost">Clear</button>
@@ -322,7 +325,7 @@
       <div class="log-head">
         <h2><span class="dot"></span>Feedback log</h2>
         <div class="log-tools">
-          <button type="button" class="ghost" id="btnCsv">Copy all (CSV)</button>
+          <button type="button" class="primary" id="btnSend">Send to SteelRock</button><button type="button" class="ghost" id="btnCsv">Copy all (CSV)</button>
           <button type="button" class="ghost" id="btnReport">Copy as report</button>
           <button type="button" class="ghost" id="btnClear">Clear all</button>
         </div>
@@ -444,6 +447,7 @@
           kv('Build', e.build)+
           (e.logs? '<div class="kv"><div class="k">Diagnostics</div><div class="v"><div class="logblock">'+esc(e.logs)+'</div></div></div>' : '')+
           kv('Reported by', e.tester)+
+          kv('Reporter email', e.email)+
           '<div class="row-actions">'+
             '<button type="button" class="ghost" data-copy="'+esc(e.id)+'">Copy this</button>'+
             '<button type="button" class="ghost del" data-del="'+esc(e.id)+'">Delete</button>'+
@@ -457,11 +461,11 @@
   function find(id){ for(var i=0;i<entries.length;i++) if(entries[i].id===id) return i; return -1; }
 
   function toCSV(rows){
-    var cols=["ID","Date","Type","System","Platform","Severity/Priority","Build","Title","Description","Steps to reproduce","Expected","Actual","Diagnostics / logs","Reported by","Status"];
+    var cols=["ID","Date","Type","System","Platform","Severity/Priority","Build","Title","Description","Steps to reproduce","Expected","Actual","Diagnostics / logs","Reported by","Reporter email","Status"];
     function c(v){ v=String(v==null?"":v); return '"'+v.replace(/"/g,'""')+'"'; }
     var out=[cols.join(",")];
     rows.forEach(function(e){
-      out.push([e.id,e.date,e.type,e.system,e.platform,e.sev,e.build,e.title,e.desc,e.steps,e.exp,e.act,e.logs,e.tester,e.status||"New"].map(c).join(","));
+      out.push([e.id,e.date,e.type,e.system,e.platform,e.sev,e.build,e.title,e.desc,e.steps,e.exp,e.act,e.logs,e.tester,e.email,e.status||"New"].map(c).join(","));
     });
     return out.join("\r\n");
   }
@@ -478,6 +482,7 @@
       }
       if(e.logs) L.push("  Logs:\n"+e.logs.split("\n").map(function(x){return "    "+x;}).join("\n"));
       if(e.tester) L.push("  Reported by: "+e.tester+" ("+(e.date||"")+")");
+      if(e.email) L.push("  Reporter email: "+e.email);
       return L.join("\n");
     }).join("\n\n");
   }
@@ -498,12 +503,28 @@
     }
   }
 
+  // ---- one-click send (Web3Forms relay) ----
+  var SEND={ endpoint:"https://api.web3forms.com/submit", accessKey:"WEB3FORMS_ACCESS_KEY", cc:"jd@sruav.co.uk" };
+  function sendAll(){
+    if(!entries.length){ toast("Nothing to send yet."); return; }
+    if(SEND.accessKey.indexOf("WEB3FORMS")===0){ toast("One-click send isn't set up yet - use <b>Copy all (CSV)</b> for now."); return; }
+    var btn=$("#btnSend"), old=btn.textContent; btn.disabled=true; btn.textContent="Sending...";
+    var payload={ access_key:SEND.accessKey, subject:"SecondSight feedback - "+entries.length+" item(s)", from_name:"SecondSight Test Feedback", cc:SEND.cc, message: toReport(entries)+"\n\n===== CSV =====\n"+toCSV(entries) };
+    fetch(SEND.endpoint,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){return r.json();})
+      .then(function(d){ toast(d&&d.success ? "Sent to SteelRock - "+entries.length+" item(s). Thank you." : "Send failed - use <b>Copy all (CSV)</b> and email it."); })
+      .catch(function(){ toast("Couldn't reach the server - use <b>Copy all (CSV)</b> and email it."); })
+      .then(function(){ btn.disabled=false; btn.textContent=old; });
+  }
+
   // ---- events ----
   $("#entryForm").addEventListener("submit", function(ev){
     ev.preventDefault();
     var title=$("#f_title").value.trim(), desc=$("#f_desc").value.trim();
     if(!title){ $("#f_title").focus(); toast("Give the entry a <b>title</b>."); return; }
     if(!desc){ $("#f_desc").focus(); toast("Add a short <b>description</b>."); return; }
+    var email=$("#f_email").value.trim();
+    if(!email){ $("#f_email").focus(); toast("Add <b>your email</b> so we can tell you when it is fixed."); return; }
     var e={
       id:nextId(), date:today(),
       type: document.querySelector('input[name=type]:checked').value,
@@ -511,13 +532,13 @@
       sev:$("#f_sev").value, build:$("#f_build").value.trim(),
       desc:desc, steps:$("#f_steps").value.trim(), exp:$("#f_exp").value.trim(), act:$("#f_act").value.trim(),
       logs:capLog($("#f_logs").value.trim()),
-      tester:$("#f_tester").value.trim(), status:"New"
+      tester:$("#f_tester").value.trim(), email:$("#f_email").value.trim(), status:"New"
     };
     entries.push(e); var ok=save(); render();
     // keep tester + build, reset the rest
-    var keepT=$("#f_tester").value, keepB=$("#f_build").value;
+    var keepT=$("#f_tester").value, keepB=$("#f_build").value, keepE=$("#f_email").value;
     $("#entryForm").reset();
-    $("#f_tester").value=keepT; $("#f_build").value=keepB;
+    $("#f_tester").value=keepT; $("#f_build").value=keepB; $("#f_email").value=keepE;
     $("#f_logs").value=""; $("#logName").textContent=""; $("#diagBox").open=false;
     syncSevLabel();
     $("#f_title").focus();
@@ -552,6 +573,8 @@
     }
   });
 
+  $("#btnSend").addEventListener("click", sendAll);
+
   $("#btnCsv").addEventListener("click", function(){
     if(!entries.length){ toast("Nothing to copy yet."); return; }
     copy(toCSV(entries), "Copied <b>"+entries.length+"</b> rows as CSV — paste into your email or a spreadsheet.");
@@ -581,6 +604,7 @@
   var fsSel=$("#filt_system");
   systems.forEach(function(s){ var o=document.createElement("option"); o.value=s; o.textContent=s; fsSel.appendChild(o); });
 
+  if(SEND && SEND.accessKey.indexOf("WEB3FORMS")===0 && $("#btnSend")){ $("#btnSend").hidden=true; }
   load(); render(); syncSevLabel();
 })();
 </script>
